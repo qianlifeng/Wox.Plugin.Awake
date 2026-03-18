@@ -1,20 +1,159 @@
 {
-  "Id": "{{.Id}}",
+  "Id": "6dd42f91-009d-4d14-909c-97f25454eea7",
   "TriggerKeywords": [
-    "{{.TriggerKeyword}}"
+    "awake"
   ],
-  "Name": "{{.Name}}",
-  "Description": "{{.Description}}",
-  "Author": "{{.Author}}",
-  "Version": "0.0.1",
+  "Name": "i18n:plugin_name",
+  "Description": "i18n:plugin_description",
+  "Author": "qianlifeng",
+  "Version": "0.0.2",
   "MinWoxVersion": "2.0.0",
   "Runtime": "nodejs",
-  "Website": "{{.Website}}",
+  "Website": "https://github.com/qianlifeng/Wox.Plugin.Awake",
   "Entry": "index.js",
   "Icon": "relative:images/app.svg",
   "SupportedOS": [
     "windows",
     "linux",
     "darwin"
-  ]
+  ],
+  "Commands": [
+    {
+      "Command": "on",
+      "Description": "i18n:command_on_desc"
+    },
+    {
+      "Command": "off",
+      "Description": "i18n:command_off_desc"
+    },
+    {
+      "Command": "status",
+      "Description": "i18n:command_status_desc"
+    },
+    {
+      "Command": "toggle",
+      "Description": "i18n:command_toggle_desc"
+    }
+  ],
+  "SettingDefinitions": [
+    {
+      "Type": "checkbox",
+      "Value": {
+        "Key": "keepDisplayAwake",
+        "Label": "i18n:settings_keep_display_awake",
+        "DefaultValue": "false",
+        "Tooltip": "i18n:settings_keep_display_awake_tooltip",
+        "Style": {}
+      },
+      "DisabledInPlatforms": [
+        "linux"
+      ]
+    }
+  ],
+  "I18n": {
+    "en_US": {
+      "plugin_name": "Awake",
+      "plugin_description": "Keep your computer awake",
+      "command_on_desc": "Start an awake session. Example: awake on 2h",
+      "command_off_desc": "Stop the current awake session",
+      "command_status_desc": "Show the current awake status",
+      "command_toggle_desc": "Start or stop Awake",
+      "settings_keep_display_awake": "Keep display awake too",
+      "settings_keep_display_awake_tooltip": "Available on macOS and Windows. Linux currently blocks system sleep only and requires `systemd-inhibit` to block suspend and idle sleep.",
+      "title_idle": "Awake is idle",
+      "title_active": "Awake is active",
+      "subtitle_idle": "Start a session to block idle sleep and suspend.",
+      "status_idle_short": "IDLE",
+      "status_active_short": "ACTIVE",
+      "until_stopped_short": "UNTIL STOPPED",
+      "status_unavailable_short": "UNAVAILABLE",
+      "action_start": "Start",
+      "action_start_indefinitely": "Start indefinitely",
+      "action_stop": "Stop",
+      "action_restart": "Restart",
+      "action_toggle": "Toggle",
+      "toggle_start_title": "Start Awake",
+      "toggle_stop_title": "Stop Awake",
+      "toggle_start_subtitle": "Toggle will start a new session.",
+      "toggle_stop_subtitle": "Toggle will stop the current session.",
+      "stop_title": "Stop keeping this computer awake",
+      "stop_subtitle": "Stops the current awake session immediately.",
+      "start_until_stopped_title": "Keep this computer awake until you stop it",
+      "start_for_duration_title": "Keep this computer awake for {duration}",
+      "start_new_subtitle": "Starts a new awake session.",
+      "start_replace_subtitle": "Replaces the current awake session with a new timer.",
+      "display_awake": "display stays awake",
+      "display_may_sleep": "display may sleep",
+      "session_summary_indefinite": "started at {startedAt} • until you stop it • {display}",
+      "session_summary_timed": "until {endsAt} • {display}",
+      "notify_started": "Awake started for {duration}.",
+      "notify_display_not_supported": "Display-awake mode is not supported on this backend.",
+      "notify_unable_to_start": "Unable to start awake mode.",
+      "notify_stopped": "Awake stopped.",
+      "notify_already_idle": "Awake is already idle.",
+      "backend_unavailable_darwin": "caffeinate is not available on this macOS system.",
+      "backend_unavailable_windows": "PowerShell is required on Windows to keep the system awake.",
+      "backend_unavailable_linux": "systemd-inhibit is required on Linux to block suspend and idle sleep.",
+      "until_you_stop_it": "until you stop it",
+      "duration_day_one": "{count} day",
+      "duration_day_other": "{count} days",
+      "duration_hour_one": "{count} hour",
+      "duration_hour_other": "{count} hours",
+      "duration_minute_one": "{count} minute",
+      "duration_minute_other": "{count} minutes",
+      "duration_joiner": " "
+    },
+    "zh_CN": {
+      "plugin_name": "Awake",
+      "plugin_description": "保持电脑唤醒，阻止休眠",
+      "command_on_desc": "启动保持唤醒，例如：awake on 2h",
+      "command_off_desc": "停止当前唤醒会话",
+      "command_status_desc": "显示当前唤醒状态",
+      "command_toggle_desc": "启动或停止 Awake",
+      "settings_keep_display_awake": "同时保持屏幕常亮",
+      "settings_keep_display_awake_tooltip": "仅 macOS 和 Windows 支持。Linux 目前只阻止系统休眠，并且依赖 `systemd-inhibit` 来阻止挂起和空闲休眠。",
+      "title_idle": "Awake 当前空闲",
+      "title_active": "Awake 正在运行",
+      "subtitle_idle": "启动一个会话来阻止空闲休眠和系统挂起。",
+      "status_idle_short": "空闲",
+      "status_active_short": "运行中",
+      "until_stopped_short": "直到手动停止",
+      "status_unavailable_short": "不可用",
+      "action_start": "启动",
+      "action_start_indefinitely": "持续启动",
+      "action_stop": "停止",
+      "action_restart": "重新启动",
+      "action_toggle": "切换",
+      "toggle_start_title": "启动 Awake",
+      "toggle_stop_title": "停止 Awake",
+      "toggle_start_subtitle": "切换后会启动一个新的会话。",
+      "toggle_stop_subtitle": "切换后会停止当前会话。",
+      "stop_title": "停止保持电脑唤醒",
+      "stop_subtitle": "立即停止当前唤醒会话。",
+      "start_until_stopped_title": "保持电脑唤醒，直到你手动停止",
+      "start_for_duration_title": "保持电脑唤醒 {duration}",
+      "start_new_subtitle": "启动一个新的唤醒会话。",
+      "start_replace_subtitle": "用新的计时器替换当前唤醒会话。",
+      "display_awake": "屏幕保持常亮",
+      "display_may_sleep": "屏幕可能休眠",
+      "session_summary_indefinite": "开始于 {startedAt} • 直到手动停止 • {display}",
+      "session_summary_timed": "持续到 {endsAt} • {display}",
+      "notify_started": "Awake 已启动，持续 {duration}。",
+      "notify_display_not_supported": "当前后端不支持保持屏幕常亮。",
+      "notify_unable_to_start": "无法启动 Awake。",
+      "notify_stopped": "Awake 已停止。",
+      "notify_already_idle": "Awake 当前已经是空闲状态。",
+      "backend_unavailable_darwin": "当前 macOS 系统不可用 caffeinate。",
+      "backend_unavailable_windows": "Windows 需要 PowerShell 才能保持系统唤醒。",
+      "backend_unavailable_linux": "Linux 需要 systemd-inhibit 来阻止挂起和空闲休眠。",
+      "until_you_stop_it": "直到你手动停止",
+      "duration_day_one": "{count}天",
+      "duration_day_other": "{count}天",
+      "duration_hour_one": "{count}小时",
+      "duration_hour_other": "{count}小时",
+      "duration_minute_one": "{count}分钟",
+      "duration_minute_other": "{count}分钟",
+      "duration_joiner": ""
+    }
+  }
 }

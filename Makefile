@@ -3,7 +3,7 @@
 DIST_DIR := dist
 SRC_DIR := src
 PYTHON ?= python3
-PLUGIN_NAME := {{.Name}}
+PLUGIN_NAME := awake
 BIN_DIR := ./node_modules/.bin
 ESLINT := $(BIN_DIR)/eslint
 PRETTIER := $(BIN_DIR)/prettier
@@ -63,6 +63,6 @@ test: check-init check-dev-deps
 	$(JEST)
 
 package: check-init build
-	cd $(DIST_DIR) && zip -r ../wox.plugin.$(PLUGIN_NAME).wox .
+	cd $(DIST_DIR) && zip -r ../wox.plugin.awake.wox .
 	rm -rf $(DIST_DIR)
 	@echo "Plugin packaged to wox.plugin.$(PLUGIN_NAME).wox"
