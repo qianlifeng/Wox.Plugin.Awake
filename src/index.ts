@@ -25,6 +25,10 @@ let currentSettings = {
   keepDisplayAwake: false
 }
 
+function formatChildPid(child: ChildProcess | null): string {
+  return child?.pid === undefined ? "none" : String(child.pid)
+}
+
 function currentIcon(): typeof ACTIVE_ICON {
   return awakeSession === null ? IDLE_ICON : ACTIVE_ICON
 }
@@ -169,8 +173,9 @@ function createAction(name: string, handler: (ctx: Context) => Promise<void>, is
   }
 }
 
-async function cleanupAwakeProcess(ctx: Context): Promise<boolean> {
+async function cleanupAwakeProcess(ctx: Context, reason: string = "unspecified"): Promise<boolean> {
   if (awakeProcess === null) {
+    await safeLog(ctx, "Debug", `cleanupAwakeProcess skipped reason=${reason} because no child process is active`)
     return false
   }
 
@@ -184,7 +189,7 @@ async function cleanupAwakeProcess(ctx: Context): Promise<boolean> {
     currentProcess.kill()
   }
 
-  await safeLog(ctx, "Info", "Stopped awake session")
+  await safeLog(ctx, "Info", `Stopped awake session reason=${reason} childPid=${formatChildPid(currentProcess)}`)
   return true
 }
 
@@ -192,7 +197,13 @@ async function startAwakeSession(ctx: Context, request: AwakeRequest): Promise<A
   const platform = detectPlatform()
   const plan = buildLaunchPlan(platform, request, process.pid)
 
-  await cleanupAwakeProcess(ctx)
+  await safeLog(
+    ctx,
+    "Info",
+    `Starting awake session pid=${process.pid} platform=${platform} backend=${plan.backend} durationMs=${request.durationMs === null ? "infinite" : String(request.durationMs)} keepDisplay=${String(request.keepDisplayAwake)}`
+  )
+
+  await cleanupAwakeProcess(ctx, "restart-before-start")
 
   const child = spawn(plan.command, plan.args, {
     stdio: "ignore",
@@ -213,6 +224,8 @@ async function startAwakeSession(ctx: Context, request: AwakeRequest): Promise<A
     supportsDisplayAwake: plan.supportsDisplayAwake
   }
 
+  await safeLog(ctx, "Info", `Spawned awake backend childPid=${formatChildPid(child)} runId=${String(runId)} command=${plan.command}`)
+
   child.once("error", async error => {
     if (awakeRunId !== runId) {
       return
@@ -220,7 +233,7 @@ async function startAwakeSession(ctx: Context, request: AwakeRequest): Promise<A
     awakeProcess = null
     awakeSession = null
     stopCountdownTimer()
-    await safeLog(ctx, "Error", `Failed to start awake session: ${error.message}`)
+    await safeLog(ctx, "Error", `Awake child process error childPid=${formatChildPid(child)} runId=${String(runId)} message=${error.message}`)
   })
 
   child.once("exit", async (code, signal) => {
@@ -230,13 +243,13 @@ async function startAwakeSession(ctx: Context, request: AwakeRequest): Promise<A
     awakeProcess = null
     awakeSession = null
     stopCountdownTimer()
-    await safeLog(ctx, "Info", `Awake session exited with code=${String(code)} signal=${String(signal)}`)
+    await safeLog(ctx, "Warning", `Awake child exited childPid=${formatChildPid(child)} runId=${String(runId)} code=${String(code)} signal=${String(signal)}`)
     if (apiContext !== null) {
       await pushStatusUpdate(apiContext)
     }
   })
 
-  await safeLog(ctx, "Info", `Started awake session with backend ${plan.backend}`)
+  await safeLog(ctx, "Info", `Started awake session with backend ${plan.backend} childPid=${formatChildPid(child)}`)
   return awakeSession
 }
 
@@ -353,7 +366,7 @@ async function runStart(ctx: Context, request: AwakeRequest): Promise<void> {
 }
 
 async function runStop(ctx: Context): Promise<void> {
-  const stopped = await cleanupAwakeProcess(ctx)
+  const stopped = await cleanupAwakeProcess(ctx, "manual-stop")
   await api.Notify(ctx, stopped ? await t(ctx, "notify_stopped") : await t(ctx, "notify_already_idle"))
   await pushStatusUpdate(ctx)
 }
@@ -438,6 +451,12 @@ async function buildResults(ctx: Context, query: Query): Promise<Result[]> {
     keepDisplayAwake: await getKeepDisplayAwake(ctx)
   }
 
+  await safeLog(
+    ctx,
+    "Debug",
+    `Processing query pid=${process.pid} rawQuery=${query.RawQuery} command=${query.Command || ""} search=${query.Search} keepDisplay=${String(currentSettings.keepDisplayAwake)}`
+  )
+
   restartCountdownTimer()
 
   const command = (query.Command || "").trim().toLowerCase()
@@ -473,12 +492,14 @@ export const plugin: Plugin = {
     api = initParams.API
     apiContext = ctx
     await api.OnUnload(ctx, async unloadCtx => {
-      await cleanupAwakeProcess(unloadCtx)
+      await safeLog(unloadCtx, "Warning", `Awake plugin unloading pid=${process.pid} activeChildPid=${formatChildPid(awakeProcess)}`)
+      await cleanupAwakeProcess(unloadCtx, "plugin-unload")
     })
     await api.OnMRURestore(ctx, async (restoreCtx, mruData) => {
+      await safeLog(restoreCtx, "Debug", `Restoring MRU result pid=${process.pid}`)
       return restoreMRUResult(restoreCtx, mruData)
     })
-    await safeLog(ctx, "Info", "Awake plugin initialized")
+    await safeLog(ctx, "Info", `Awake plugin initialized pid=${process.pid}`)
   },
 
   query: async (ctx: Context, query: Query): Promise<Result[]> => {

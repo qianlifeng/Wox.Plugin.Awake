@@ -126,6 +126,7 @@ export function buildLaunchPlan(platform: Platform, request: AwakeRequest, paren
   }
 
   const durationSeconds = request.durationMs === null ? 0 : Math.max(1, Math.ceil(request.durationMs / 1000))
+  const normalizedParentPid = Math.max(0, Math.trunc(parentPid))
 
   if (backend.backend === "caffeinate") {
     const args = ["-i", "-w", String(parentPid)]
@@ -145,13 +146,13 @@ export function buildLaunchPlan(platform: Platform, request: AwakeRequest, paren
 
   if (backend.backend === "powershell") {
     const script = [
-      "$parentPid = [int]$args[0]",
-      "$durationSeconds = [int]$args[1]",
-      "$keepDisplay = [int]$args[2] -eq 1",
+      `$parentPid = ${normalizedParentPid}`,
+      `$durationSeconds = ${durationSeconds}`,
+      `$keepDisplay = ${request.keepDisplayAwake ? "$true" : "$false"}`,
       "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class AwakeNative { [DllImport(\"kernel32.dll\", SetLastError=true)] public static extern uint SetThreadExecutionState(uint esFlags); }'",
-      "$ES_CONTINUOUS = 0x80000000",
-      "$ES_SYSTEM_REQUIRED = 0x00000001",
-      "$ES_DISPLAY_REQUIRED = 0x00000002",
+      "$ES_CONTINUOUS = [uint32]2147483648",
+      "$ES_SYSTEM_REQUIRED = [uint32]1",
+      "$ES_DISPLAY_REQUIRED = [uint32]2",
       "$flags = $ES_CONTINUOUS -bor $ES_SYSTEM_REQUIRED",
       "if ($keepDisplay) { $flags = $flags -bor $ES_DISPLAY_REQUIRED }",
       "$startedAt = Get-Date",
@@ -170,7 +171,7 @@ export function buildLaunchPlan(platform: Platform, request: AwakeRequest, paren
     return {
       backend: backend.backend,
       command: backend.command,
-      args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script, String(parentPid), String(durationSeconds), request.keepDisplayAwake ? "1" : "0"],
+      args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
       supportsDisplayAwake: backend.supportsDisplayAwake
     }
   }
