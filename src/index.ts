@@ -1,9 +1,8 @@
 import { ChildProcess, spawn } from "child_process"
-import { Context, MRUData, Plugin, PluginInitParams, PublicAPI, Query, Result, ResultAction } from "@wox-launcher/wox-plugin"
+import { randomUUID } from "crypto"
+import { ActionContext, Context, Plugin, PluginInitParams, PublicAPI, Query, Result, ResultAction } from "@wox-launcher/wox-plugin"
 import { AwakeRequest, AwakeSession, buildLaunchPlan, detectPlatform, formatCountdown, formatTime, parseDurationInput, resolveBackend } from "./awake"
 
-const STATUS_RESULT_ID = "awake-status"
-const MRU_STATUS_RESULT_ID = "awake-mru-status"
 const MRU_KIND_CONTEXT_KEY = "kind"
 const MRU_STATUS_CONTEXT_VALUE = "status"
 const ACTIVE_ICON = {
@@ -21,22 +20,13 @@ let awakeProcess: ChildProcess | null = null
 let awakeSession: AwakeSession | null = null
 let awakeRunId = 0
 let countdownTimer: NodeJS.Timeout | null = null
+let currentStatusResultId: string | null = null
 let currentSettings = {
   keepDisplayAwake: false
 }
 
-function formatChildPid(child: ChildProcess | null): string {
-  return child?.pid === undefined ? "none" : String(child.pid)
-}
-
 function currentIcon(): typeof ACTIVE_ICON {
   return awakeSession === null ? IDLE_ICON : ACTIVE_ICON
-}
-
-function buildStatusMRUContext(): Record<string, string> {
-  return {
-    [MRU_KIND_CONTEXT_KEY]: MRU_STATUS_CONTEXT_VALUE
-  }
 }
 
 function isStatusMRUContext(contextData: Record<string, string> | undefined): boolean {
@@ -161,21 +151,25 @@ async function formatSessionSummary(ctx: Context, session: AwakeSession): Promis
   })
 }
 
-function createAction(name: string, handler: (ctx: Context) => Promise<void>, isDefault: boolean = false, contextData?: Record<string, string>): ResultAction {
-  return {
-    Name: name,
-    IsDefault: isDefault,
-    PreventHideAfterAction: true,
-    ContextData: contextData,
-    Action: async (ctx: Context) => {
-      await handler(ctx)
-    }
+async function updateResult(ctx: Context, resultId: string): Promise<void> {
+  const currentResult = await api.GetUpdatableResult(ctx, resultId)
+  if (currentResult === null) {
+    return
   }
+
+  const statusResult = await buildStatusResult(ctx, resolveBackend(detectPlatform()), resultId)
+  await api.UpdateResult(ctx, {
+    Id: resultId,
+    Title: statusResult.Title,
+    SubTitle: statusResult.SubTitle,
+    Icon: statusResult.Icon,
+    Tails: statusResult.Tails,
+    Actions: statusResult.Actions
+  })
 }
 
-async function cleanupAwakeProcess(ctx: Context, reason: string = "unspecified"): Promise<boolean> {
+async function cleanupAwakeProcess(ctx: Context): Promise<boolean> {
   if (awakeProcess === null) {
-    await safeLog(ctx, "Debug", `cleanupAwakeProcess skipped reason=${reason} because no child process is active`)
     return false
   }
 
@@ -189,7 +183,7 @@ async function cleanupAwakeProcess(ctx: Context, reason: string = "unspecified")
     currentProcess.kill()
   }
 
-  await safeLog(ctx, "Info", `Stopped awake session reason=${reason} childPid=${formatChildPid(currentProcess)}`)
+  await safeLog(ctx, "Info", "Stopped awake session")
   return true
 }
 
@@ -197,13 +191,7 @@ async function startAwakeSession(ctx: Context, request: AwakeRequest): Promise<A
   const platform = detectPlatform()
   const plan = buildLaunchPlan(platform, request, process.pid)
 
-  await safeLog(
-    ctx,
-    "Info",
-    `Starting awake session pid=${process.pid} platform=${platform} backend=${plan.backend} durationMs=${request.durationMs === null ? "infinite" : String(request.durationMs)} keepDisplay=${String(request.keepDisplayAwake)}`
-  )
-
-  await cleanupAwakeProcess(ctx, "restart-before-start")
+  await cleanupAwakeProcess(ctx)
 
   const child = spawn(plan.command, plan.args, {
     stdio: "ignore",
@@ -224,8 +212,6 @@ async function startAwakeSession(ctx: Context, request: AwakeRequest): Promise<A
     supportsDisplayAwake: plan.supportsDisplayAwake
   }
 
-  await safeLog(ctx, "Info", `Spawned awake backend childPid=${formatChildPid(child)} runId=${String(runId)} command=${plan.command}`)
-
   child.once("error", async error => {
     if (awakeRunId !== runId) {
       return
@@ -233,7 +219,7 @@ async function startAwakeSession(ctx: Context, request: AwakeRequest): Promise<A
     awakeProcess = null
     awakeSession = null
     stopCountdownTimer()
-    await safeLog(ctx, "Error", `Awake child process error childPid=${formatChildPid(child)} runId=${String(runId)} message=${error.message}`)
+    await safeLog(ctx, "Error", `Failed to start awake session: ${error.message}`)
   })
 
   child.once("exit", async (code, signal) => {
@@ -243,64 +229,82 @@ async function startAwakeSession(ctx: Context, request: AwakeRequest): Promise<A
     awakeProcess = null
     awakeSession = null
     stopCountdownTimer()
-    await safeLog(ctx, "Warning", `Awake child exited childPid=${formatChildPid(child)} runId=${String(runId)} code=${String(code)} signal=${String(signal)}`)
-    if (apiContext !== null) {
-      await pushStatusUpdate(apiContext)
+    await safeLog(ctx, "Info", `Awake session exited with code=${String(code)} signal=${String(signal)}`)
+    if (apiContext !== null && currentStatusResultId !== null) {
+      await updateResult(apiContext, currentStatusResultId)
     }
   })
 
-  await safeLog(ctx, "Info", `Started awake session with backend ${plan.backend} childPid=${formatChildPid(child)}`)
+  await safeLog(ctx, "Info", `Started awake session with backend ${plan.backend}`)
   return awakeSession
 }
 
-async function buildStatusResult(ctx: Context, backend = resolveBackend(detectPlatform()), resultId: string = STATUS_RESULT_ID): Promise<Result> {
+async function buildStatusResult(ctx: Context, backend = resolveBackend(detectPlatform()), resultId: string): Promise<Result> {
+  currentStatusResultId = resultId
   const unavailable = awakeSession === null && !backend.available
   const actions: ResultAction[] = []
-  const statusMRUContext = buildStatusMRUContext()
+  const statusMRUContext = {
+    [MRU_KIND_CONTEXT_KEY]: MRU_STATUS_CONTEXT_VALUE
+  }
 
   if (!unavailable) {
     if (awakeSession === null) {
-      actions.push(
-        createAction(
-          await t(ctx, "action_start"),
-          async innerCtx => {
-            await runStart(innerCtx, {
+      actions.push({
+        Name: await t(ctx, "action_start"),
+        IsDefault: true,
+        PreventHideAfterAction: true,
+        ContextData: statusMRUContext,
+        Action: async (innerCtx: Context, actionContext: ActionContext) => {
+          await runStart(
+            innerCtx,
+            {
               durationMs: null,
               keepDisplayAwake: currentSettings.keepDisplayAwake
-            })
-          },
-          true,
-          statusMRUContext
-        )
-      )
-      actions.push(
-        createAction(
-          await t(ctx, "action_start_indefinitely"),
-          async innerCtx => {
-            await runStart(innerCtx, {
+            },
+            actionContext.ResultId
+          )
+        }
+      })
+      actions.push({
+        Name: await t(ctx, "action_start_indefinitely"),
+        PreventHideAfterAction: true,
+        ContextData: statusMRUContext,
+        Action: async (innerCtx: Context, actionContext: ActionContext) => {
+          await runStart(
+            innerCtx,
+            {
               durationMs: null,
               keepDisplayAwake: currentSettings.keepDisplayAwake
-            })
-          },
-          false,
-          statusMRUContext
-        )
-      )
+            },
+            actionContext.ResultId
+          )
+        }
+      })
     } else {
-      actions.push(createAction(await t(ctx, "action_stop"), runStop, true, statusMRUContext))
-      actions.push(
-        createAction(
-          await t(ctx, "action_restart"),
-          async innerCtx => {
-            await runStart(innerCtx, {
+      actions.push({
+        Name: await t(ctx, "action_stop"),
+        IsDefault: true,
+        PreventHideAfterAction: true,
+        ContextData: statusMRUContext,
+        Action: async (innerCtx: Context, actionContext: ActionContext) => {
+          await runStop(innerCtx, actionContext.ResultId)
+        }
+      })
+      actions.push({
+        Name: await t(ctx, "action_restart"),
+        PreventHideAfterAction: true,
+        ContextData: statusMRUContext,
+        Action: async (innerCtx: Context, actionContext: ActionContext) => {
+          await runStart(
+            innerCtx,
+            {
               durationMs: null,
               keepDisplayAwake: currentSettings.keepDisplayAwake
-            })
-          },
-          false,
-          statusMRUContext
-        )
-      )
+            },
+            actionContext.ResultId
+          )
+        }
+      })
     }
   }
 
@@ -314,32 +318,20 @@ async function buildStatusResult(ctx: Context, backend = resolveBackend(detectPl
   }
 }
 
-async function pushStatusUpdate(ctx: Context): Promise<void> {
-  const statusResult = await buildStatusResult(ctx)
-  await api.UpdateResult(ctx, {
-    Id: STATUS_RESULT_ID,
-    Title: statusResult.Title,
-    SubTitle: statusResult.SubTitle,
-    Icon: statusResult.Icon,
-    Tails: statusResult.Tails,
-    Actions: statusResult.Actions
-  })
-}
-
 function restartCountdownTimer(): void {
   stopCountdownTimer()
-  if (awakeSession === null || awakeSession.endsAt === null || apiContext === null) {
+  if (awakeSession === null || awakeSession.endsAt === null || apiContext === null || currentStatusResultId === null) {
     return
   }
 
   countdownTimer = setInterval(() => {
-    if (apiContext !== null) {
-      void pushStatusUpdate(apiContext)
+    if (apiContext !== null && currentStatusResultId !== null) {
+      void updateResult(apiContext, currentStatusResultId)
     }
   }, 1000)
 }
 
-async function runStart(ctx: Context, request: AwakeRequest): Promise<void> {
+async function runStart(ctx: Context, request: AwakeRequest, resultId: string): Promise<void> {
   const backend = resolveBackend(detectPlatform())
   if (!backend.available) {
     await api.Notify(ctx, await backendUnavailableMessage(ctx))
@@ -348,6 +340,7 @@ async function runStart(ctx: Context, request: AwakeRequest): Promise<void> {
 
   try {
     const session = await startAwakeSession(ctx, request)
+    currentStatusResultId = resultId
     restartCountdownTimer()
 
     const durationText = session.endsAt === null ? await t(ctx, "until_you_stop_it") : await formatLocalizedDuration(ctx, session.endsAt - session.startedAt)
@@ -357,7 +350,7 @@ async function runStart(ctx: Context, request: AwakeRequest): Promise<void> {
     }
 
     await api.Notify(ctx, notification)
-    await pushStatusUpdate(ctx)
+    await updateResult(ctx, resultId)
   } catch (error) {
     const message = error instanceof Error ? error.message : await t(ctx, "notify_unable_to_start")
     await safeLog(ctx, "Error", message)
@@ -365,85 +358,11 @@ async function runStart(ctx: Context, request: AwakeRequest): Promise<void> {
   }
 }
 
-async function runStop(ctx: Context): Promise<void> {
-  const stopped = await cleanupAwakeProcess(ctx, "manual-stop")
+async function runStop(ctx: Context, resultId: string): Promise<void> {
+  currentStatusResultId = resultId
+  const stopped = await cleanupAwakeProcess(ctx)
   await api.Notify(ctx, stopped ? await t(ctx, "notify_stopped") : await t(ctx, "notify_already_idle"))
-  await pushStatusUpdate(ctx)
-}
-
-async function runToggle(ctx: Context, keepDisplayAwake: boolean): Promise<void> {
-  if (awakeSession !== null) {
-    await runStop(ctx)
-    return
-  }
-
-  await runStart(ctx, {
-    durationMs: null,
-    keepDisplayAwake
-  })
-}
-
-async function buildStartResult(ctx: Context, durationMs: number | null, keepDisplayAwake: boolean, resultId: string = STATUS_RESULT_ID): Promise<Result> {
-  const title = durationMs === null ? await t(ctx, "start_until_stopped_title") : await t(ctx, "start_for_duration_title", { duration: await formatLocalizedDuration(ctx, durationMs) })
-  const subTitle = awakeSession === null ? await t(ctx, "start_new_subtitle") : await t(ctx, "start_replace_subtitle")
-
-  return {
-    Id: resultId,
-    Title: title,
-    SubTitle: subTitle,
-    Icon: currentIcon(),
-    Actions: [
-      createAction(
-        await t(ctx, "action_start"),
-        async innerCtx => {
-          await runStart(innerCtx, {
-            durationMs,
-            keepDisplayAwake
-          })
-        },
-        true
-      )
-    ]
-  }
-}
-
-async function buildStopResult(ctx: Context, resultId: string = STATUS_RESULT_ID): Promise<Result> {
-  return {
-    Id: resultId,
-    Title: await t(ctx, "stop_title"),
-    SubTitle: await t(ctx, "stop_subtitle"),
-    Icon: currentIcon(),
-    Actions: [createAction(await t(ctx, "action_stop"), runStop, true)]
-  }
-}
-
-async function buildToggleResult(ctx: Context, keepDisplayAwake: boolean, resultId: string = STATUS_RESULT_ID): Promise<Result> {
-  return {
-    Id: resultId,
-    Title: awakeSession === null ? await t(ctx, "toggle_start_title") : await t(ctx, "toggle_stop_title"),
-    SubTitle: awakeSession === null ? await t(ctx, "toggle_start_subtitle") : await t(ctx, "toggle_stop_subtitle"),
-    Icon: currentIcon(),
-    Actions: [
-      createAction(
-        await t(ctx, "action_toggle"),
-        async innerCtx => {
-          await runToggle(innerCtx, keepDisplayAwake)
-        },
-        true
-      )
-    ]
-  }
-}
-
-async function restoreMRUResult(ctx: Context, mruData: MRUData): Promise<Result | null> {
-  if (!isStatusMRUContext(mruData.ContextData)) {
-    return null
-  }
-
-  currentSettings = {
-    keepDisplayAwake: await getKeepDisplayAwake(ctx)
-  }
-  return buildStatusResult(ctx, resolveBackend(detectPlatform()), MRU_STATUS_RESULT_ID)
+  await updateResult(ctx, resultId)
 }
 
 async function buildResults(ctx: Context, query: Query): Promise<Result[]> {
@@ -451,40 +370,116 @@ async function buildResults(ctx: Context, query: Query): Promise<Result[]> {
     keepDisplayAwake: await getKeepDisplayAwake(ctx)
   }
 
-  await safeLog(
-    ctx,
-    "Debug",
-    `Processing query pid=${process.pid} rawQuery=${query.RawQuery} command=${query.Command || ""} search=${query.Search} keepDisplay=${String(currentSettings.keepDisplayAwake)}`
-  )
-
-  restartCountdownTimer()
-
   const command = (query.Command || "").trim().toLowerCase()
   const search = query.Search.trim().toLowerCase()
   const parsedDuration = parseDurationInput(search)
   const backend = resolveBackend(detectPlatform())
+  const resultId = randomUUID()
+  let result: Result
 
   if (!search && !command) {
-    return [await buildStatusResult(ctx, backend)]
+    result = await buildStatusResult(ctx, backend, resultId)
+  } else if (command === "off" || command === "stop" || search === "off" || search === "stop") {
+    result = {
+      Id: resultId,
+      Title: await t(ctx, "stop_title"),
+      SubTitle: await t(ctx, "stop_subtitle"),
+      Icon: currentIcon(),
+      Actions: [
+        {
+          Name: await t(ctx, "action_stop"),
+          IsDefault: true,
+          PreventHideAfterAction: true,
+          Action: async (innerCtx: Context, actionContext: ActionContext) => {
+            await runStop(innerCtx, actionContext.ResultId)
+          }
+        }
+      ]
+    }
+  } else if (command === "toggle" || search === "toggle") {
+    result = {
+      Id: resultId,
+      Title: awakeSession === null ? await t(ctx, "toggle_start_title") : await t(ctx, "toggle_stop_title"),
+      SubTitle: awakeSession === null ? await t(ctx, "toggle_start_subtitle") : await t(ctx, "toggle_stop_subtitle"),
+      Icon: currentIcon(),
+      Actions: [
+        {
+          Name: await t(ctx, "action_toggle"),
+          IsDefault: true,
+          PreventHideAfterAction: true,
+          Action: async (innerCtx: Context, actionContext: ActionContext) => {
+            if (awakeSession !== null) {
+              await runStop(innerCtx, actionContext.ResultId)
+              return
+            }
+
+            await runStart(
+              innerCtx,
+              {
+                durationMs: null,
+                keepDisplayAwake: currentSettings.keepDisplayAwake
+              },
+              actionContext.ResultId
+            )
+          }
+        }
+      ]
+    }
+  } else if (command === "on") {
+    const durationMs = parsedDuration === null ? null : parsedDuration.durationMs
+    result = {
+      Id: resultId,
+      Title: durationMs === null ? await t(ctx, "start_until_stopped_title") : await t(ctx, "start_for_duration_title", { duration: await formatLocalizedDuration(ctx, durationMs) }),
+      SubTitle: awakeSession === null ? await t(ctx, "start_new_subtitle") : await t(ctx, "start_replace_subtitle"),
+      Icon: currentIcon(),
+      Actions: [
+        {
+          Name: await t(ctx, "action_start"),
+          IsDefault: true,
+          PreventHideAfterAction: true,
+          Action: async (innerCtx: Context, actionContext: ActionContext) => {
+            await runStart(
+              innerCtx,
+              {
+                durationMs,
+                keepDisplayAwake: currentSettings.keepDisplayAwake
+              },
+              actionContext.ResultId
+            )
+          }
+        }
+      ]
+    }
+  } else if (parsedDuration !== null) {
+    result = {
+      Id: resultId,
+      Title: await t(ctx, "start_for_duration_title", { duration: await formatLocalizedDuration(ctx, parsedDuration.durationMs) }),
+      SubTitle: awakeSession === null ? await t(ctx, "start_new_subtitle") : await t(ctx, "start_replace_subtitle"),
+      Icon: currentIcon(),
+      Actions: [
+        {
+          Name: await t(ctx, "action_start"),
+          IsDefault: true,
+          PreventHideAfterAction: true,
+          Action: async (innerCtx: Context, actionContext: ActionContext) => {
+            await runStart(
+              innerCtx,
+              {
+                durationMs: parsedDuration.durationMs,
+                keepDisplayAwake: currentSettings.keepDisplayAwake
+              },
+              actionContext.ResultId
+            )
+          }
+        }
+      ]
+    }
+  } else {
+    result = await buildStatusResult(ctx, backend, resultId)
   }
 
-  if (command === "off" || command === "stop" || search === "off" || search === "stop") {
-    return [await buildStopResult(ctx)]
-  }
-
-  if (command === "toggle" || search === "toggle") {
-    return [await buildToggleResult(ctx, currentSettings.keepDisplayAwake)]
-  }
-
-  if (command === "on") {
-    return [await buildStartResult(ctx, parsedDuration === null ? null : parsedDuration.durationMs, currentSettings.keepDisplayAwake)]
-  }
-
-  if (parsedDuration !== null) {
-    return [await buildStartResult(ctx, parsedDuration.durationMs, currentSettings.keepDisplayAwake)]
-  }
-
-  return [await buildStatusResult(ctx, backend)]
+  restartCountdownTimer()
+  return [result]
 }
 
 export const plugin: Plugin = {
@@ -492,14 +487,22 @@ export const plugin: Plugin = {
     api = initParams.API
     apiContext = ctx
     await api.OnUnload(ctx, async unloadCtx => {
-      await safeLog(unloadCtx, "Warning", `Awake plugin unloading pid=${process.pid} activeChildPid=${formatChildPid(awakeProcess)}`)
-      await cleanupAwakeProcess(unloadCtx, "plugin-unload")
+      await cleanupAwakeProcess(unloadCtx)
     })
     await api.OnMRURestore(ctx, async (restoreCtx, mruData) => {
-      await safeLog(restoreCtx, "Debug", `Restoring MRU result pid=${process.pid}`)
-      return restoreMRUResult(restoreCtx, mruData)
+      if (!isStatusMRUContext(mruData.ContextData)) {
+        return null
+      }
+
+      currentSettings = {
+        keepDisplayAwake: await getKeepDisplayAwake(restoreCtx)
+      }
+      const resultId = randomUUID()
+      const result = await buildStatusResult(restoreCtx, resolveBackend(detectPlatform()), resultId)
+      restartCountdownTimer()
+      return result
     })
-    await safeLog(ctx, "Info", `Awake plugin initialized pid=${process.pid}`)
+    await safeLog(ctx, "Info", "Awake plugin initialized")
   },
 
   query: async (ctx: Context, query: Query): Promise<Result[]> => {
