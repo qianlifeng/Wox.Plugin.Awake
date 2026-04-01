@@ -1,16 +1,22 @@
 {
   "Id": "6dd42f91-009d-4d14-909c-97f25454eea7",
-  "TriggerKeywords": ["awake"],
+  "TriggerKeywords": [
+    "awake"
+  ],
   "Name": "i18n:plugin_name",
   "Description": "i18n:plugin_description",
   "Author": "qianlifeng",
-  "Version": "0.0.4",
+  "Version": "0.0.3",
   "MinWoxVersion": "2.0.0",
   "Runtime": "nodejs",
   "Website": "https://github.com/qianlifeng/Wox.Plugin.Awake",
   "Entry": "index.js",
   "Icon": "relative:images/app.svg",
-  "SupportedOS": ["windows", "linux", "darwin"],
+  "SupportedOS": [
+    "windows",
+    "linux",
+    "darwin"
+  ],
   "Features": [
     {
       "Name": "mru",
@@ -47,7 +53,9 @@
         "Tooltip": "i18n:settings_keep_display_awake_tooltip",
         "Style": {}
       },
-      "DisabledInPlatforms": ["linux"]
+      "DisabledInPlatforms": [
+        "linux"
+      ]
     }
   ],
   "I18n": {
