@@ -1,0 +1,2 @@
+minimumReleaseAgeExclude:
+  - '@wox-launcher/wox-plugin@0.0.133'
